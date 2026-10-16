@@ -923,17 +923,6 @@ body.is-solved .in-success-credit {
     white-space: normal;
   }
 
-  .secondary-controls #reveal-button {
-    align-self: flex-start;
-    width: auto;
-    min-width: 0;
-    padding-inline: 0;
-    border: 0;
-    background: transparent;
-    text-decoration: underline;
-    text-underline-offset: 0.2em;
-  }
-
   #hint-button:disabled {
     opacity: 1;
     border-style: dashed;
