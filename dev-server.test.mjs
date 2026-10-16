@@ -850,9 +850,16 @@ const gameplayElementTags = {
   'game-panel': 'section',
   'game-title': 'h1',
   'puzzle-content': 'div',
+  'theme-color': 'meta',
   scene: 'canvas',
+  'clue-row': 'div',
+  'genre-hint': 'span',
+  'year-hint': 'span',
   'year-clue': 'span',
   'genre-clue': 'span',
+  'title-hint': 'div',
+  'letter-count': 'p',
+  'masked-title': 'p',
   'guess-form': 'form',
   'guess-input': 'input',
   'guess-button': 'button',
@@ -1004,14 +1011,19 @@ test('pinned share pages keep the movie/date and preserve attempt and hint detai
   assert.equal(gameplayElement(first, 'completion-message').textContent, 'A new movie is waiting.');
   first.window.dispatchEvent({type: 'focus'});
 
+  for (let wrongGuess = 1; wrongGuess <= 3; wrongGuess += 1) {
+    submitGameplayGuess(first, `not ${targetMovie.title} ${wrongGuess}`);
+  }
+  assert.equal(gameplayElement(first, 'attempt-count').textContent, '3');
+  assert.equal(gameplayElement(first, 'hint-button').disabled, false);
   gameplayElement(first, 'hint-button').click();
   submitGameplayGuess(first, targetMovie.title);
   first.flushShareCallbacks();
   const twitter = new URL(gameplayElement(first, 'share-twitter').href);
   const sharedText = twitter.searchParams.get('text');
   assert.match(sharedText, new RegExp(`lut game · ${pinnedDay}`));
-  assert.match(sharedText, /Found the movie in 1 guess/);
-  assert.match(sharedText, /Extra hint used/);
+  assert.match(sharedText, /Found the movie in 4 guesses/);
+  assert.match(sharedText, /1 hint used/);
   for (const privateAnswer of [targetMovie.title, String(targetMovie.year), targetMovie.hint, ...targetMovie.genres]) {
     assert.equal(sharedText.includes(privateAnswer), false, `share text leaks ${privateAnswer}`);
   }
@@ -1019,16 +1031,357 @@ test('pinned share pages keep the movie/date and preserve attempt and hint detai
   gameplayElement(first, 'share-instagram').click();
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(shareCalls.length, 1);
-  assert.match(shareCalls[0].text, /Found the movie in 1 guess/);
-  assert.match(shareCalls[0].text, /Extra hint used/);
+  assert.match(shareCalls[0].text, /Found the movie in 4 guesses/);
+  assert.match(shareCalls[0].text, /1 hint used/);
   assert.equal(shareCalls[0].url, location);
   assert.equal(shareCalls[0].files.length, 1);
 
   const restored = await loadPinnedGameplay({location, day: '2030-01-01', storage});
   assert.equal(gameplayElement(restored, 'date-label').getAttribute('datetime'), pinnedDay);
   assert.equal(gameplayElement(restored, 'answer-title').textContent, `${targetMovie.title} (${targetMovie.year})`);
-  assert.equal(gameplayElement(restored, 'success-hint').textContent, 'Extra hint used');
+  assert.equal(gameplayElement(restored, 'success-count').textContent, '4');
+  assert.equal(gameplayElement(restored, 'success-hint').textContent, '1 hint used');
+  assert.equal(gameplayElement(restored, 'genre-hint').hidden, false);
+  assert.equal(gameplayElement(restored, 'year-hint').hidden, true);
   assert.deepEqual(gameplayBarcode(restored), Array.from(targetMovie.colors));
+});
+
+test('the main daily page loads the next scheduled movie after local midnight', async () => {
+  const published = await loadPublishedModel();
+  const day = '2026-10-16';
+  const nextDay = '2026-10-17';
+  const harness = await loadPinnedGameplay({
+    location: published.LUT_SITE.baseUrl,
+    day,
+    storage: new GameplayStorage(),
+  });
+  const firstMovie = published.LUT_DAILY.movieForDay(published.MOVIES, day);
+  const nextMovie = published.LUT_DAILY.movieForDay(published.MOVIES, nextDay);
+  assert.equal(gameplayElement(harness, 'date-label').getAttribute('datetime'), day);
+  assert.deepEqual(gameplayBarcode(harness), Array.from(firstMovie.colors));
+
+  harness.clock.set(nextDay);
+  harness.timers.runNext();
+  assert.equal(gameplayElement(harness, 'date-label').getAttribute('datetime'), nextDay);
+  assert.deepEqual(gameplayBarcode(harness), Array.from(nextMovie.colors));
+  assert.notDeepEqual(gameplayBarcode(harness), Array.from(firstMovie.colors));
+  assert.equal(gameplayElement(harness, 'attempt-count').textContent, '0');
+  assert.equal(gameplayElement(harness, 'result').hidden, true);
+  assert.equal(gameplayElement(harness, 'clue-row').hidden, true);
+  assert.equal(gameplayElement(harness, 'title-hint').hidden, true);
+  assert.equal(gameplayElement(harness, 'feedback').textContent, 'A new day, a new movie.');
+});
+
+test(
+  'progressively reveals optional hints at cumulative guess thresholds and persists and resets them',
+  {timeout: 15_000},
+  async () => {
+    const day = '2026-10-16';
+    const location = 'http://localhost/?dev=1';
+    const storage = new GameplayStorage();
+    const shareCalls = [];
+    const first = await loadPinnedGameplay({location, day, storage, shareCalls});
+    const targetMovie = first.window.LUT_DAILY.movieForDay(first.window.MOVIES, day);
+    const sceneBeforeHints = gameplayBarcode(first);
+
+    assert.equal(gameplayElement(first, 'theme-color').getAttribute('content'), '#faf9f6');
+    assert.equal(gameplayElement(first, 'clue-row').hidden, true);
+    assert.equal(gameplayElement(first, 'genre-hint').hidden, true);
+    assert.equal(gameplayElement(first, 'year-hint').hidden, true);
+    assert.equal(gameplayElement(first, 'genre-clue').textContent, '');
+    assert.equal(gameplayElement(first, 'year-clue').textContent, '');
+    assert.equal(gameplayElement(first, 'hint-text').textContent, '');
+    assert.equal(gameplayElement(first, 'title-hint').hidden, true);
+    assert.equal(gameplayElement(first, 'letter-count').textContent, '');
+    assert.equal(gameplayElement(first, 'masked-title').textContent, '');
+    assert.equal(gameplayElement(first, 'hint-button').disabled, true);
+    assert.equal(gameplayElement(first, 'hint-button').textContent, 'Genre hint in 3 guesses');
+
+    // Disabled clicks, blank guesses, and punctuation-only guesses do not reveal or consume anything.
+    gameplayElement(first, 'hint-button').click();
+    submitGameplayGuess(first, '   ');
+    submitGameplayGuess(first, '!!!');
+    assert.equal(gameplayElement(first, 'attempt-count').textContent, '0');
+    assert.equal(gameplayElement(first, 'clue-row').hidden, true);
+    assert.equal(gameplayElement(first, 'hint-button').disabled, true);
+
+    for (let wrongGuess = 1; wrongGuess <= 2; wrongGuess += 1) {
+      submitGameplayGuess(first, `not this movie ${wrongGuess}`);
+    }
+    assert.equal(gameplayElement(first, 'attempt-count').textContent, '2');
+    assert.equal(gameplayElement(first, 'hint-button').disabled, true);
+    assert.equal(gameplayElement(first, 'hint-button').textContent, 'Genre hint in 1 guess');
+
+    submitGameplayGuess(first, 'not this movie 3');
+    assert.equal(gameplayElement(first, 'attempt-count').textContent, '3');
+    assert.equal(gameplayElement(first, 'clue-row').hidden, true, 'threshold must not reveal a hint before the click');
+    assert.equal(gameplayElement(first, 'hint-button').disabled, false);
+    assert.equal(gameplayElement(first, 'hint-button').textContent, 'Reveal genre');
+    gameplayElement(first, 'hint-button').click();
+    assert.equal(gameplayElement(first, 'clue-row').hidden, false);
+    assert.equal(gameplayElement(first, 'genre-hint').hidden, false);
+    assert.equal(gameplayElement(first, 'genre-clue').textContent, targetMovie.genres.join(' / '));
+    assert.equal(gameplayElement(first, 'year-hint').hidden, true);
+    assert.equal(gameplayElement(first, 'year-clue').textContent, '');
+    assert.equal(gameplayElement(first, 'hint-text').textContent, '');
+    assert.equal(gameplayElement(first, 'hint-button').disabled, true);
+    assert.equal(gameplayElement(first, 'hint-button').textContent, 'Year hint in 2 guesses');
+    assert.deepEqual(gameplayBarcode(first), sceneBeforeHints, 'revealing genre must not repaint the barcode');
+
+    // A disabled click cannot bypass the next cumulative threshold.
+    gameplayElement(first, 'hint-button').click();
+    assert.equal(gameplayElement(first, 'genre-hint').hidden, false);
+    assert.equal(gameplayElement(first, 'year-hint').hidden, true);
+
+    submitGameplayGuess(first, 'not this movie 4');
+    assert.equal(gameplayElement(first, 'hint-button').disabled, true);
+    assert.equal(gameplayElement(first, 'hint-button').textContent, 'Year hint in 1 guess');
+    submitGameplayGuess(first, 'not this movie 5');
+    assert.equal(gameplayElement(first, 'attempt-count').textContent, '5');
+    assert.equal(gameplayElement(first, 'year-hint').hidden, true);
+    assert.equal(gameplayElement(first, 'hint-button').disabled, false);
+    assert.equal(gameplayElement(first, 'hint-button').textContent, 'Reveal year');
+    gameplayElement(first, 'hint-button').click();
+    assert.equal(gameplayElement(first, 'genre-clue').textContent, targetMovie.genres.join(' / '));
+    assert.equal(gameplayElement(first, 'year-hint').hidden, false);
+    assert.equal(gameplayElement(first, 'year-clue').textContent, String(targetMovie.year));
+    assert.equal(gameplayElement(first, 'hint-text').textContent, '');
+    assert.equal(gameplayElement(first, 'hint-button').disabled, true);
+    assert.equal(gameplayElement(first, 'hint-button').textContent, 'Story hint in 3 guesses');
+    assert.deepEqual(gameplayBarcode(first), sceneBeforeHints, 'revealing year must not repaint the barcode');
+
+    for (let wrongGuess = 6; wrongGuess <= 7; wrongGuess += 1) {
+      submitGameplayGuess(first, `not this movie ${wrongGuess}`);
+    }
+    assert.equal(gameplayElement(first, 'hint-button').disabled, true);
+    assert.equal(gameplayElement(first, 'hint-button').textContent, 'Story hint in 1 guess');
+    submitGameplayGuess(first, 'not this movie 8');
+    assert.equal(gameplayElement(first, 'attempt-count').textContent, '8');
+    assert.equal(gameplayElement(first, 'hint-text').textContent, '');
+    assert.equal(gameplayElement(first, 'hint-button').disabled, false);
+    assert.equal(gameplayElement(first, 'hint-button').textContent, 'Reveal story hint');
+    gameplayElement(first, 'hint-button').click();
+    assert.equal(gameplayElement(first, 'hint-text').textContent, targetMovie.hint);
+    assert.equal(gameplayElement(first, 'title-hint').hidden, true, 'future title clues stay hidden until their threshold');
+    assert.equal(gameplayElement(first, 'letter-count').textContent, '');
+    assert.equal(gameplayElement(first, 'masked-title').textContent, '');
+    assert.equal(gameplayElement(first, 'hint-button').disabled, true);
+    assert.equal(gameplayElement(first, 'hint-button').textContent, 'Title shape hint in 5 guesses');
+    assert.deepEqual(gameplayBarcode(first), sceneBeforeHints, 'revealing story must not repaint the barcode');
+
+    for (let wrongGuess = 9; wrongGuess <= 12; wrongGuess += 1) {
+      submitGameplayGuess(first, `not this movie ${wrongGuess}`);
+    }
+    assert.equal(gameplayElement(first, 'attempt-count').textContent, '12');
+    assert.equal(gameplayElement(first, 'title-hint').hidden, true);
+    assert.equal(gameplayElement(first, 'hint-button').disabled, true);
+    assert.equal(gameplayElement(first, 'hint-button').textContent, 'Title shape hint in 1 guess');
+    submitGameplayGuess(first, 'not this movie 13');
+    assert.equal(gameplayElement(first, 'attempt-count').textContent, '13');
+    assert.equal(gameplayElement(first, 'title-hint').hidden, true, 'the title shape still needs an explicit click');
+    assert.equal(gameplayElement(first, 'letter-count').textContent, '');
+    assert.equal(gameplayElement(first, 'masked-title').textContent, '');
+    assert.equal(gameplayElement(first, 'hint-button').disabled, false);
+    assert.equal(gameplayElement(first, 'hint-button').textContent, 'Reveal title shape');
+    gameplayElement(first, 'hint-button').click();
+    assert.equal(gameplayElement(first, 'title-hint').hidden, false);
+    const targetLetters = Array.from(targetMovie.title).filter(char => /\p{L}/u.test(char)).length;
+    const targetDigits = Array.from(targetMovie.title).filter(char => /\p{N}/u.test(char)).length;
+    assert.equal(
+      gameplayElement(first, 'letter-count').textContent,
+      `${targetLetters} ${targetLetters === 1 ? 'letter' : 'letters'}${targetDigits ? ` · ${targetDigits} ${targetDigits === 1 ? 'digit' : 'digits'}` : ''}`,
+    );
+    const driveMask = gameplayElement(first, 'masked-title').textContent;
+    assert.equal(driveMask, Array.from(targetMovie.title, () => '_').join('\u00a0'));
+    assert.equal(driveMask.includes(targetMovie.title), false);
+    assert.equal(gameplayElement(first, 'hint-button').disabled, true);
+    assert.equal(gameplayElement(first, 'hint-button').textContent, 'First letter hint in 8 guesses');
+
+    for (let wrongGuess = 14; wrongGuess <= 20; wrongGuess += 1) {
+      submitGameplayGuess(first, `not this movie ${wrongGuess}`);
+    }
+    assert.equal(gameplayElement(first, 'attempt-count').textContent, '20');
+    assert.equal(gameplayElement(first, 'masked-title').textContent, driveMask);
+    assert.equal(gameplayElement(first, 'hint-button').disabled, true);
+    assert.equal(gameplayElement(first, 'hint-button').textContent, 'First letter hint in 1 guess');
+    submitGameplayGuess(first, 'not this movie 21');
+    assert.equal(gameplayElement(first, 'attempt-count').textContent, '21');
+    assert.equal(gameplayElement(first, 'masked-title').textContent, driveMask);
+    assert.equal(gameplayElement(first, 'hint-button').disabled, false);
+    assert.equal(gameplayElement(first, 'hint-button').textContent, 'Reveal first letter');
+    gameplayElement(first, 'hint-button').click();
+    assert.equal(gameplayElement(first, 'title-hint').hidden, false);
+    assert.equal(
+      gameplayElement(first, 'letter-count').textContent,
+      `${targetLetters} ${targetLetters === 1 ? 'letter' : 'letters'}${targetDigits ? ` · ${targetDigits} ${targetDigits === 1 ? 'digit' : 'digits'}` : ''}`,
+    );
+    const firstAlphabetic = Array.from(targetMovie.title).find(char => /\p{L}/u.test(char));
+    assert.equal(gameplayElement(first, 'masked-title').textContent, `${firstAlphabetic.toUpperCase()}${'\u00a0_'.repeat(targetMovie.title.length - 1)}`);
+    assert.equal(gameplayElement(first, 'hint-text').textContent, targetMovie.hint);
+    assert.equal(gameplayElement(first, 'hint-button').disabled, true);
+    assert.equal(gameplayElement(first, 'hint-button').textContent, 'All hints used');
+    assert.deepEqual(gameplayBarcode(first), sceneBeforeHints, 'title hints must not repaint the barcode');
+
+    // The matching path remains generic: the actual scheduled title solves this round.
+    submitGameplayGuess(first, targetMovie.title);
+    first.flushShareCallbacks();
+    assert.equal(gameplayElement(first, 'result').hidden, false);
+    assert.equal(gameplayElement(first, 'puzzle-content').hidden, true);
+    assert.equal(gameplayElement(first, 'theme-color').getAttribute('content'), '#0d1016');
+    assert.equal(gameplayElement(first, 'success-count').textContent, '22');
+    assert.equal(gameplayElement(first, 'success-unit').textContent, 'guesses');
+    assert.equal(gameplayElement(first, 'success-hint').textContent, '5 hints used');
+    const sharedText = new URL(gameplayElement(first, 'share-twitter').href).searchParams.get('text');
+    assert.match(sharedText, /Found the movie in 22 guesses/);
+    assert.match(sharedText, /5 hints used/);
+    for (const privateAnswer of [targetMovie.title, String(targetMovie.year), targetMovie.hint, ...targetMovie.genres]) {
+      assert.equal(sharedText.includes(privateAnswer), false, `share text leaks ${privateAnswer}`);
+    }
+    gameplayElement(first, 'share-instagram').click();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(shareCalls.length, 1);
+    assert.match(shareCalls[0].text, /Found the movie in 22 guesses/);
+    assert.match(shareCalls[0].text, /5 hints used/);
+    assert.equal(shareCalls[0].files.length, 1);
+
+    // Both the cumulative counters and the terminal result survive a reload.
+    const restored = await loadPinnedGameplay({location, day, storage});
+    assert.equal(gameplayElement(restored, 'success-count').textContent, '22');
+    assert.equal(gameplayElement(restored, 'success-hint').textContent, '5 hints used');
+    assert.equal(gameplayElement(restored, 'genre-clue').textContent, targetMovie.genres.join(' / '));
+    assert.equal(gameplayElement(restored, 'year-clue').textContent, String(targetMovie.year));
+    assert.equal(gameplayElement(restored, 'hint-text').textContent, '');
+    assert.equal(gameplayElement(restored, 'title-hint').hidden, true);
+    assert.equal(gameplayElement(restored, 'letter-count').textContent, '');
+    assert.equal(gameplayElement(restored, 'masked-title').textContent, '');
+    assert.deepEqual(gameplayBarcode(restored), sceneBeforeHints);
+
+    gameplayElement(restored, 'dev-reset').click();
+    assert.equal(gameplayElement(restored, 'result').hidden, true);
+    assert.equal(gameplayElement(restored, 'puzzle-content').hidden, false);
+    assert.equal(gameplayElement(restored, 'theme-color').getAttribute('content'), '#faf9f6');
+    assert.equal(gameplayElement(restored, 'attempt-count').textContent, '0');
+    assert.equal(gameplayElement(restored, 'clue-row').hidden, true);
+    assert.equal(gameplayElement(restored, 'genre-clue').textContent, '');
+    assert.equal(gameplayElement(restored, 'year-clue').textContent, '');
+    assert.equal(gameplayElement(restored, 'hint-text').textContent, '');
+    assert.equal(gameplayElement(restored, 'title-hint').hidden, true);
+    assert.equal(gameplayElement(restored, 'letter-count').textContent, '');
+    assert.equal(gameplayElement(restored, 'masked-title').textContent, '');
+    assert.equal(gameplayElement(restored, 'hint-button').disabled, true);
+    assert.equal(gameplayElement(restored, 'hint-button').textContent, 'Genre hint in 3 guesses');
+
+    // Older saved results retain their terminal attempt count while migrating the old boolean hint flag.
+    const stateKey = `lut-game:${day}`;
+    storage.setItem(stateKey, JSON.stringify({
+      movieId: targetMovie.id,
+      attempts: 4,
+      status: 'solved',
+      hinted: true,
+      lastGuess: 'legacy guess',
+    }));
+    const legacyHinted = await loadPinnedGameplay({location, day, storage});
+    assert.equal(gameplayElement(legacyHinted, 'success-count').textContent, '4');
+    assert.equal(gameplayElement(legacyHinted, 'success-hint').textContent, '3 hints used');
+    assert.match(new URL(gameplayElement(legacyHinted, 'share-twitter').href).searchParams.get('text'), /3 hints used/);
+
+    storage.setItem(stateKey, JSON.stringify({
+      movieId: targetMovie.id,
+      attempts: 2,
+      status: 'solved',
+      hinted: false,
+      lastGuess: 'legacy guess',
+    }));
+    const legacyUnhinted = await loadPinnedGameplay({location, day, storage});
+    assert.equal(gameplayElement(legacyUnhinted, 'success-count').textContent, '2');
+    assert.equal(gameplayElement(legacyUnhinted, 'success-hint').textContent, 'No hints used');
+    assert.match(new URL(gameplayElement(legacyUnhinted, 'share-twitter').href).searchParams.get('text'), /No hints used/);
+
+    storage.setItem(stateKey, JSON.stringify({
+      movieId: targetMovie.id,
+      attempts: 6,
+      status: 'solved',
+      hintsUsed: 2,
+      lastGuess: 'modern guess',
+    }));
+    const twoHints = await loadPinnedGameplay({location, day, storage});
+    assert.equal(gameplayElement(twoHints, 'success-count').textContent, '6');
+    assert.equal(gameplayElement(twoHints, 'success-hint').textContent, '2 hints used');
+    assert.match(new URL(gameplayElement(twoHints, 'share-twitter').href).searchParams.get('text'), /2 hints used/);
+  },
+);
+
+test('title shape and first-letter hints preserve digits punctuation and word boundaries', async () => {
+  const published = await loadPublishedModel();
+  const targetMovie = published.MOVIES.find(movie => movie.title === '2001: A Space Odyssey');
+  assert.ok(targetMovie, 'expected a numeric and punctuated title in the published data');
+  const pinnedDay = published.LUT_DAILY.recentDayForMovie(published.MOVIES, targetMovie, '2026-10-16');
+  const location = `${published.LUT_SITE.baseUrl}play/${published.LUT_DAILY.shareId(targetMovie)}/?day=${pinnedDay}`;
+  const harness = await loadPinnedGameplay({location, day: pinnedDay, storage: new GameplayStorage()});
+
+  for (let wrongGuess = 1; wrongGuess <= 3; wrongGuess += 1) {
+    submitGameplayGuess(harness, `not this movie ${wrongGuess}`);
+  }
+  gameplayElement(harness, 'hint-button').click();
+  for (let wrongGuess = 4; wrongGuess <= 5; wrongGuess += 1) {
+    submitGameplayGuess(harness, `not this movie ${wrongGuess}`);
+  }
+  gameplayElement(harness, 'hint-button').click();
+  for (let wrongGuess = 6; wrongGuess <= 8; wrongGuess += 1) {
+    submitGameplayGuess(harness, `not this movie ${wrongGuess}`);
+  }
+  gameplayElement(harness, 'hint-button').click();
+  for (let wrongGuess = 9; wrongGuess <= 13; wrongGuess += 1) {
+    submitGameplayGuess(harness, `not this movie ${wrongGuess}`);
+  }
+  assert.equal(gameplayElement(harness, 'hint-button').disabled, false);
+  assert.equal(gameplayElement(harness, 'hint-button').textContent, 'Reveal title shape');
+  gameplayElement(harness, 'hint-button').click();
+  const titleShape = gameplayElement(harness, 'masked-title').textContent;
+  const alphanumericCount = Array.from(targetMovie.title).filter(char => /[\p{L}\p{N}]/u.test(char)).length;
+  const letterCount = Array.from(targetMovie.title).filter(char => /\p{L}/u.test(char)).length;
+  const digitCount = Array.from(targetMovie.title).filter(char => /\p{N}/u.test(char)).length;
+  assert.equal(gameplayElement(harness, 'title-hint').hidden, false);
+  assert.equal(gameplayElement(harness, 'letter-count').textContent, `${letterCount} letters · ${digitCount} digits`);
+  assert.equal((titleShape.match(/_/g) ?? []).length, alphanumericCount);
+  assert.equal(titleShape.includes(':'), true);
+  assert.equal(titleShape.includes('   '), true, 'word boundaries should remain visible');
+  assert.equal(titleShape.includes('2001'), false);
+  assert.equal(titleShape.includes('A Space Odyssey'), false);
+
+  for (let wrongGuess = 14; wrongGuess <= 21; wrongGuess += 1) {
+    submitGameplayGuess(harness, `not this movie ${wrongGuess}`);
+  }
+  gameplayElement(harness, 'hint-button').click();
+  const firstLetter = gameplayElement(harness, 'masked-title').textContent;
+  assert.equal(firstLetter.startsWith('_\u00a0_\u00a0_\u00a0_\u00a0:'), true, 'digits remain masked before the first alphabetic character');
+  assert.equal(firstLetter.startsWith('_\u00a0_\u00a0_\u00a0_\u00a0:   A'), true);
+  assert.equal((firstLetter.match(/_/g) ?? []).length, alphanumericCount - 1);
+  assert.equal(firstLetter.includes('2001'), false);
+  assert.equal(firstLetter.includes('A Space Odyssey'), false);
+});
+
+test('a hint action rechecks a newer solved result before mutating merged progress', async () => {
+  const day = '2026-10-17';
+  const location = 'http://localhost/?dev=1';
+  const storage = new GameplayStorage();
+  const firstTab = await loadPinnedGameplay({location, day, storage});
+  const secondTab = await loadPinnedGameplay({location, day, storage});
+  const targetMovie = firstTab.window.LUT_DAILY.movieForDay(firstTab.window.MOVIES, day);
+
+  for (let wrongGuess = 1; wrongGuess <= 3; wrongGuess += 1) {
+    submitGameplayGuess(firstTab, `not this movie ${wrongGuess}`);
+  }
+  assert.equal(gameplayElement(firstTab, 'hint-button').disabled, false);
+
+  // The second tab reads and merges the first tab's attempts, then solves before the first tab's click.
+  submitGameplayGuess(secondTab, targetMovie.title);
+  assert.equal(gameplayElement(secondTab, 'success-count').textContent, '4');
+  gameplayElement(firstTab, 'hint-button').click();
+  assert.equal(gameplayElement(firstTab, 'result').hidden, false);
+  assert.equal(gameplayElement(firstTab, 'success-count').textContent, '4');
+  assert.equal(gameplayElement(firstTab, 'success-hint').textContent, 'No hints used');
+  assert.equal(gameplayElement(firstTab, 'genre-hint').hidden, true);
 });
 
 test(

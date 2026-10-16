@@ -4,6 +4,13 @@
   const movies = window.MOVIES;
   const daily = window.LUT_DAILY;
   const publicBase = window.LUT_SITE.baseUrl;
+  const hints = [
+    {after:3,name:'Genre'},
+    {after:5,name:'Year'},
+    {after:8,name:'Story'},
+    {after:13,name:'Title shape'},
+    {after:21,name:'First letter'},
+  ];
   const canvas = $('scene');
   const ctx = canvas.getContext('2d');
   const dialog = $('help-dialog');
@@ -47,12 +54,12 @@
   }
 
   function hintLabel() {
-    return state.hinted ? 'Extra hint used' : 'No extra hint used';
+    return state.hintsUsed ? `${state.hintsUsed} ${state.hintsUsed === 1 ? 'hint' : 'hints'} used` : 'No hints used';
   }
 
   function winTitle() {
-    if (!state.hinted && state.attempts === 1) return 'One-take wonder.';
-    if (!state.hinted && state.attempts <= 3) return 'Sharp eye.';
+    if (!state.hintsUsed && state.attempts === 1) return 'One-take wonder.';
+    if (!state.hintsUsed && state.attempts <= 3) return 'Sharp eye.';
     return 'That’s a wrap.';
   }
 
@@ -73,7 +80,7 @@
   }
 
   function prepareShareCard() {
-    const key = `${dayKey}:${state.attempts}:${state.hinted}`;
+    const key = `${dayKey}:${state.attempts}:${state.hintsUsed}`;
     const tweet = new URL('https://twitter.com/intent/tweet');
     tweet.searchParams.set('text',resultText());
     if (gameUrl()) tweet.searchParams.set('url',gameUrl());
@@ -166,16 +173,20 @@
   }
 
   function freshState() {
-    return {movieId:movie.id, attempts:0, status:'playing', hinted:false, lastGuess:''};
+    return {movieId:movie.id, attempts:0, status:'playing', hintsUsed:0, lastGuess:''};
   }
 
   function readState() {
     try {
       const saved = JSON.parse(localStorage.getItem(`lut-game:${dayKey}`));
-      if (!saved || saved.movieId !== movie.id || !['playing','solved','revealed'].includes(saved.status)
+      if (!saved) return null;
+      // Older results recorded only whether the final story clue was used.
+      const hintsUsed = saved.hintsUsed ?? (typeof saved.hinted === 'boolean' ? (saved.hinted ? 3 : 0) : undefined);
+      if (saved.movieId !== movie.id || !['playing','solved','revealed'].includes(saved.status)
           || !Number.isSafeInteger(saved.attempts) || saved.attempts < 0
-          || typeof saved.hinted !== 'boolean' || typeof saved.lastGuess !== 'string') return null;
-      return {...freshState(), ...saved, lastGuess:saved.lastGuess.slice(0,160)};
+          || !Number.isInteger(hintsUsed) || hintsUsed < 0 || hintsUsed > hints.length
+          || typeof saved.lastGuess !== 'string') return null;
+      return {movieId:movie.id,attempts:saved.attempts,status:saved.status,hintsUsed,lastGuess:saved.lastGuess.slice(0,160)};
     } catch { return null; }
   }
 
@@ -190,7 +201,7 @@
       ...state,
       lastGuess:saved.attempts > state.attempts ? saved.lastGuess : state.lastGuess,
       attempts:Math.max(saved.attempts,state.attempts),
-      hinted:saved.hinted || state.hinted,
+      hintsUsed:Math.max(saved.hintsUsed,state.hintsUsed),
       status:rank[saved.status] > rank[state.status] ? saved.status : state.status,
     };
   }
@@ -227,6 +238,27 @@
     return candidates.includes(normalize(guess)) || candidates.includes(normalize(withoutYear));
   }
 
+  function maskedTitle(revealFirst) {
+    const characters = Array.from(movie.title);
+    let first = characters.findIndex(char => /\p{L}/u.test(char));
+    if (first < 0) first = characters.findIndex(char => /\p{N}/u.test(char));
+    let offset = 0;
+    return movie.title.split(/(\s+)/).map(word => {
+      if (/^\s+$/.test(word)) { offset += Array.from(word).length; return '   '; }
+      return Array.from(word).map(char => {
+        const show = revealFirst && offset === first;
+        offset++;
+        return /[\p{L}\p{N}]/u.test(char) ? (show ? char.toUpperCase() : '_') : char;
+      }).join('\u00a0');
+    }).join('');
+  }
+
+  function titleLengthLabel() {
+    const letters = Array.from(movie.title).filter(char => /\p{L}/u.test(char)).length;
+    const digits = Array.from(movie.title).filter(char => /\p{N}/u.test(char)).length;
+    return `${letters} ${letters === 1 ? 'letter' : 'letters'}${digits ? ` · ${digits} ${digits === 1 ? 'digit' : 'digits'}` : ''}`;
+  }
+
   function describeColors(colors) {
     return Array.from({length:8}, (_, section) => {
       const samples = colors.slice(Math.floor(section*colors.length/8), Math.floor((section+1)*colors.length/8));
@@ -251,14 +283,26 @@
     const solved = state.status === 'solved';
     if (solved) winnerPalette().forEach((color,i) => document.body.style.setProperty(`--winner-${i}`,color.join(' ')));
     document.body.classList.toggle('is-solved',solved);
+    $('theme-color').setAttribute('content',solved ? '#0d1016' : '#faf9f6');
     $('puzzle-content').hidden = solved;
-    $('year-clue').textContent = movie.year;
-    $('genre-clue').textContent = movie.genres.join(' / ');
+    $('clue-row').hidden = state.hintsUsed === 0;
+    $('genre-hint').hidden = state.hintsUsed < 1;
+    $('year-hint').hidden = state.hintsUsed < 2;
+    $('genre-clue').textContent = state.hintsUsed >= 1 ? movie.genres.join(' / ') : '';
+    $('year-clue').textContent = state.hintsUsed >= 2 ? movie.year : '';
+    $('title-hint').hidden = state.hintsUsed < 4 || done;
+    $('letter-count').textContent = state.hintsUsed >= 4 && !done ? titleLengthLabel() : '';
+    $('masked-title').textContent = state.hintsUsed >= 4 && !done ? maskedTitle(state.hintsUsed >= 5) : '';
+    const nextHint = hints[state.hintsUsed];
+    const guessesLeft = nextHint ? Math.max(0,nextHint.after-state.attempts) : 0;
     $('guess-form').hidden = done;
     $('hint-button').hidden = done;
-    $('hint-button').disabled = state.hinted;
+    $('hint-button').disabled = !nextHint || guessesLeft > 0;
+    $('hint-button').textContent = !nextHint ? 'All hints used' : guessesLeft
+      ? `${nextHint.name} hint in ${guessesLeft} ${guessesLeft === 1 ? 'guess' : 'guesses'}`
+      : `Reveal ${nextHint.name.toLowerCase()}${state.hintsUsed === 2 ? ' hint' : ''}`;
     $('reveal-button').hidden = done;
-    $('hint-text').textContent = state.hinted && !done ? movie.hint : '';
+    $('hint-text').textContent = state.hintsUsed >= 3 && !done ? movie.hint : '';
     $('attempt-count').textContent = state.attempts;
     $('attempt-label').textContent = state.attempts === 1 ? 'guess' : 'guesses';
     $('result').hidden = !done;
@@ -369,13 +413,13 @@
   });
 
   $('hint-button').addEventListener('click', () => {
-    if (ensureDay() || state.status !== 'playing' || state.hinted) return;
+    if (ensureDay() || state.status !== 'playing') return;
     updateState(() => {
-      state.hinted = true;
+      const nextHint = hints[state.hintsUsed];
+      if (!nextHint || state.attempts < nextHint.after) { render(); return; }
+      state.hintsUsed++;
       saveState();
-      // Keep this live region mounted, so the new clue is announced once.
-      $('hint-text').textContent = movie.hint;
-      $('hint-button').disabled = true;
+      render();
       $('guess-input').focus({preventScroll:true});
     });
   });
