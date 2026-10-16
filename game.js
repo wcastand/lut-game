@@ -180,12 +180,18 @@
     try {
       const saved = JSON.parse(localStorage.getItem(`lut-game:${dayKey}`));
       if (!saved) return null;
-      // Older results recorded only whether the final story clue was used.
-      const hintsUsed = saved.hintsUsed ?? (typeof saved.hinted === 'boolean' ? (saved.hinted ? 3 : 0) : undefined);
+      const legacyHints = saved.hintsUsed == null && typeof saved.hinted === 'boolean';
+      let hintsUsed = saved.hintsUsed ?? (legacyHints ? (saved.hinted ? 3 : 0) : undefined);
       if (saved.movieId !== movie.id || !['playing','solved','revealed'].includes(saved.status)
           || !Number.isSafeInteger(saved.attempts) || saved.attempts < 0
           || !Number.isInteger(hintsUsed) || hintsUsed < 0 || hintsUsed > hints.length
           || typeof saved.lastGuess !== 'string') return null;
+      if (saved.status === 'playing') {
+        // Old hint use does not opt an unfinished game into the new hints.
+        // Also repair saves already migrated before the unlock rules applied.
+        const unlocked = hints.filter(hint => saved.attempts >= hint.after).length;
+        hintsUsed = legacyHints ? 0 : Math.min(hintsUsed,unlocked);
+      }
       return {movieId:movie.id,attempts:saved.attempts,status:saved.status,hintsUsed,lastGuess:saved.lastGuess.slice(0,160)};
     } catch { return null; }
   }

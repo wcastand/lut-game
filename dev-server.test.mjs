@@ -1361,6 +1361,35 @@ test('title shape and first-letter hints preserve digits punctuation and word bo
   assert.equal(firstLetter.includes('A Space Odyssey'), false);
 });
 
+test('unfinished saved games cannot restore locked hints or migrate the old story flag into new hints', async () => {
+  const day = '2026-10-16';
+  const location = 'http://localhost/?dev=1';
+  const published = await loadPublishedModel();
+  const targetMovie = published.LUT_DAILY.movieForDay(published.MOVIES, day);
+  for (const item of [
+    {name:'old story flag before unlock',attempts:2,hinted:true,expectedHints:0},
+    {name:'old story flag after unlock',attempts:12,hinted:true,expectedHints:0},
+    {name:'previously migrated early story',attempts:2,hintsUsed:3,expectedHints:0},
+    {name:'early story with genre and year eligible',attempts:7,hintsUsed:3,expectedHints:2},
+    {name:'legitimately revealed story',attempts:8,hintsUsed:3,expectedHints:3},
+  ]) {
+    const storage = new GameplayStorage();
+    const saved = {movieId:targetMovie.id,status:'playing',attempts:item.attempts,lastGuess:'wrong movie'};
+    if ('hinted' in item) saved.hinted = item.hinted;
+    else saved.hintsUsed = item.hintsUsed;
+    storage.setItem(`lut-game:${day}`,JSON.stringify(saved));
+    const harness = await loadPinnedGameplay({location,day,storage});
+    assert.equal(gameplayElement(harness,'attempt-count').textContent,String(item.attempts),item.name);
+    assert.equal(gameplayElement(harness,'hint-text').textContent,item.expectedHints >= 3 ? targetMovie.hint : '',item.name);
+    assert.equal(gameplayElement(harness,'genre-hint').hidden,item.expectedHints < 1,item.name);
+    assert.equal(gameplayElement(harness,'year-hint').hidden,item.expectedHints < 2,item.name);
+    assert.equal(gameplayElement(harness,'masked-title').textContent,'',item.name);
+    submitGameplayGuess(harness,targetMovie.title);
+    assert.equal(gameplayElement(harness,'success-hint').textContent,
+      item.expectedHints ? `${item.expectedHints} hints used` : 'No hints used',item.name);
+  }
+});
+
 test('a hint action rechecks a newer solved result before mutating merged progress', async () => {
   const day = '2026-10-17';
   const location = 'http://localhost/?dev=1';
