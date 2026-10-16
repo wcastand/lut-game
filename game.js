@@ -180,19 +180,20 @@
     try {
       const saved = JSON.parse(localStorage.getItem(`lut-game:${dayKey}`));
       if (!saved) return null;
+      const status = saved.status === 'revealed' ? 'playing' : saved.status;
       const legacyHints = saved.hintsUsed == null && typeof saved.hinted === 'boolean';
       let hintsUsed = saved.hintsUsed ?? (legacyHints ? (saved.hinted ? 3 : 0) : undefined);
-      if (saved.movieId !== movie.id || !['playing','solved','revealed'].includes(saved.status)
+      if (saved.movieId !== movie.id || !['playing','solved'].includes(status)
           || !Number.isSafeInteger(saved.attempts) || saved.attempts < 0
           || !Number.isInteger(hintsUsed) || hintsUsed < 0 || hintsUsed > hints.length
           || typeof saved.lastGuess !== 'string') return null;
-      if (saved.status === 'playing') {
+      if (status === 'playing') {
         // Old hint use does not opt an unfinished game into the new hints.
         // Also repair saves already migrated before the unlock rules applied.
         const unlocked = hints.filter(hint => saved.attempts >= hint.after).length;
         hintsUsed = legacyHints ? 0 : Math.min(hintsUsed,unlocked);
       }
-      return {movieId:movie.id,attempts:saved.attempts,status:saved.status,hintsUsed,lastGuess:saved.lastGuess.slice(0,160)};
+      return {movieId:movie.id,attempts:saved.attempts,status,hintsUsed,lastGuess:saved.lastGuess.slice(0,160)};
     } catch { return null; }
   }
 
@@ -202,7 +203,7 @@
 
   function mergeState(saved) {
     if (!saved) return;
-    const rank = {playing:0,revealed:1,solved:2};
+    const rank = {playing:0,solved:1};
     state = {
       ...state,
       lastGuess:saved.attempts > state.attempts ? saved.lastGuess : state.lastGuess,
@@ -307,7 +308,6 @@
     $('hint-button').textContent = !nextHint ? 'All hints used' : guessesLeft
       ? `${nextHint.name} hint in ${guessesLeft} ${guessesLeft === 1 ? 'guess' : 'guesses'}`
       : `Reveal ${nextHint.name.toLowerCase()}${state.hintsUsed === 2 ? ' hint' : ''}`;
-    $('reveal-button').hidden = done;
     $('hint-text').textContent = state.hintsUsed >= 3 && !done ? movie.hint : '';
     $('attempt-count').textContent = state.attempts;
     $('attempt-label').textContent = state.attempts === 1 ? 'guess' : 'guesses';
@@ -341,7 +341,6 @@
     $('success-date').setAttribute('datetime',dayKey);
     $('answer-title').textContent = done ? `${movie.title} (${movie.year})` : '';
     $('feedback').textContent = state.status === 'solved' ? 'Correct.'
-      : state.status === 'revealed' ? 'Answer revealed.'
       : state.lastGuess ? `“${state.lastGuess}” isn’t it. Try again.` : '';
     canvas.setAttribute('role','img');
     canvas.setAttribute('aria-label', `${done ? movie.title+': ' : ''}Movie color timeline, in eight chronological sections: ${describeColors(movie.colors)}.`);
@@ -427,16 +426,6 @@
       saveState();
       render();
       $('guess-input').focus({preventScroll:true});
-    });
-  });
-
-  $('reveal-button').addEventListener('click', () => {
-    if (ensureDay() || state.status !== 'playing') return;
-    updateState(() => {
-      state.status = 'revealed';
-      saveState();
-      render();
-      $('answer-title').focus({preventScroll:true});
     });
   });
 
