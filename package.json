@@ -1,0 +1,13 @@
+{
+  "name": "lut-game",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "node scripts/build-pages.mjs && node dev-server.mjs",
+    "build": "node scripts/build-pages.mjs",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
