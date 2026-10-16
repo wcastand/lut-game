@@ -2,8 +2,9 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="description" content="A daily film guessing game: identify one movie from its chronological color barcode." />
+    <meta id="theme-color" name="theme-color" content="#faf9f6" />
     <title>Name the movie — lut game</title>
     <link rel="stylesheet" href="style.css" />
       <meta property="og:title" content="Name the movie — lut game" />
@@ -59,9 +60,14 @@
             </div>
           </div>
 
-          <div class="clue-row" aria-label="Initial clues">
-            <span>Year <span id="year-clue">—</span></span>
-            <span>Genre <span id="genre-clue">—</span></span>
+          <div class="clue-row" id="clue-row" aria-label="Revealed hints" aria-live="polite" aria-atomic="true" hidden>
+            <span id="genre-hint" hidden>Genre <span id="genre-clue"></span></span>
+            <span id="year-hint" hidden>Year <span id="year-clue"></span></span>
+          </div>
+
+          <div class="title-hint" id="title-hint" aria-live="polite" aria-atomic="true" hidden>
+            <p id="letter-count"></p>
+            <p id="masked-title"></p>
           </div>
 
           <form id="guess-form">
@@ -73,7 +79,9 @@
                 name="movie"
                 autocomplete="off"
                 spellcheck="false"
-                placeholder="Movie title"
+                placeholder="Your movie guess"
+                enterkeyhint="go"
+                autocapitalize="words"
                 required
                 maxlength="160"
               />
@@ -86,7 +94,7 @@
           </div>
 
           <div class="secondary-controls">
-            <button id="hint-button" type="button">Another hint</button>
+            <button id="hint-button" type="button" disabled>Genre hint in 3 guesses</button>
             <button id="reveal-button" type="button">Reveal answer</button>
           </div>
           <p id="hint-text" aria-live="polite"></p>
@@ -110,8 +118,8 @@
           <canvas id="win-barcode" width="1200" height="72" aria-hidden="true" hidden></canvas>
           <p id="share-prompt" hidden></p>
           <div id="share-controls" role="group" aria-label="Share your result" hidden>
-            <a id="share-twitter" href="https://twitter.com/intent/tweet" target="_blank" rel="noopener noreferrer">Challenge on X</a>
-            <button id="share-instagram" type="button">Share to Instagram</button>
+            <a id="share-twitter" href="https://twitter.com/intent/tweet" target="_blank" rel="noopener noreferrer">Share on X</a>
+            <button id="share-instagram" type="button">Instagram</button>
             <button id="copy-link" type="button">Copy link</button>
           </div>
           <p id="share-status" role="status" aria-live="polite" aria-atomic="true"></p>
@@ -144,7 +152,7 @@
           <h2 id="help-title">How to play</h2>
           <button id="close-help" type="button" aria-label="Close help">×</button>
         </div>
-        <p>One movie a day. Read the color timeline and use the year and genre to guess the title. Unlimited guesses. Aim for as few guesses as possible. An extra story clue is available. Revealing the answer ends today’s puzzle.</p>
+        <p>One movie a day. Guess the title from its color timeline in as few guesses as possible. Optional hints unlock after 3 guesses (genre), 5 guesses (year), 8 guesses (story), 13 guesses (letter count and masked title), and 21 guesses (first letter). Revealing the answer ends today’s puzzle.</p>
         <p>Each stripe is the average color of one frame sampled every 10 seconds, read from opening to credits. Your progress is kept on this device when browser storage is available.</p>
       </div>
     </dialog>

@@ -1,5 +1,6 @@
 :root {
   color-scheme: light;
+  background: var(--background);
   --background: #faf9f6;
   --surface: #ffffff;
   --ink: #20201e;
@@ -9,10 +10,15 @@
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
+:root:has(body.is-solved) {
+  color-scheme: dark;
+  background: #0d1016;
+}
+
 #dev-reset {
   position: fixed;
   right: 1rem;
-  bottom: 1rem;
+  bottom: max(1rem, env(safe-area-inset-bottom));
   z-index: 20;
   min-height: 44px;
   padding: 0.6rem 0.85rem;
@@ -33,9 +39,10 @@ html {
 
 body {
   min-width: 280px;
-  min-height: 100vh;
+  min-height: 100svh;
   margin: 0;
   overflow-x: hidden;
+  padding-inline: env(safe-area-inset-left) env(safe-area-inset-right);
   background: var(--background);
   color: var(--ink);
   font-size: 16px;
@@ -94,7 +101,7 @@ main,
 }
 
 .site-header {
-  padding-top: 1.35rem;
+  padding-top: max(1.35rem, env(safe-area-inset-top));
 }
 
 .header-inner {
@@ -126,8 +133,8 @@ main,
 .help-button,
 #close-help {
   display: inline-grid;
-  width: 2.75rem;
-  height: 2.75rem;
+  width: 3rem;
+  height: 3rem;
   place-items: center;
   padding: 0;
   border: 1px solid var(--rule);
@@ -222,6 +229,29 @@ main {
   letter-spacing: 0.035em;
 }
 
+.title-hint {
+  margin-top: 1rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--rule);
+  border-radius: 0.2rem;
+  background: var(--surface);
+}
+
+#letter-count {
+  margin: 0 0 0.4rem;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+#masked-title {
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 1rem;
+  line-height: 1.9;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 #guess-form {
   margin-top: 1.2rem;
 }
@@ -235,7 +265,7 @@ main {
 #guess-input,
 #guess-button,
 .secondary-controls button {
-  min-height: 2.75rem;
+  min-height: 3rem;
 }
 
 #guess-input {
@@ -247,7 +277,7 @@ main {
   border-radius: 0.2rem;
   background: var(--surface);
   color: var(--ink);
-  font-size: 1rem;
+  font-size: 16px;
 }
 
 #guess-input::placeholder {
@@ -293,6 +323,7 @@ main {
   min-width: 0;
   color: var(--ink);
   font-size: 0.82rem;
+  overflow-wrap: anywhere;
 }
 
 .secondary-controls {
@@ -450,7 +481,7 @@ main {
 #share-controls a,
 #share-controls button {
   display: inline-flex;
-  min-height: 2.75rem;
+  min-height: 3rem;
   align-items: center;
   justify-content: center;
   padding: 0.65rem 1rem;
@@ -497,14 +528,14 @@ main {
 
 #share-link {
   width: min(100%, 32rem);
-  min-height: 44px;
+  min-height: 3rem;
   margin-top: 0.75rem;
   padding: 0.6rem;
   border: 1px solid var(--rule);
   border-radius: 0.2rem;
   background: var(--surface);
   color: var(--ink);
-  font-size: 0.8rem;
+  font-size: 16px;
 }
 
 #play-today {
@@ -531,6 +562,7 @@ main {
 }
 
 body.is-solved {
+  color-scheme: dark;
   --ink: #f7f5ee;
   --muted: #b8bac1;
   --surface: #191d26;
@@ -574,7 +606,8 @@ body.is-solved #result {
   width: min(100%, 58rem);
   min-height: 100svh;
   margin: 0 auto;
-  padding: clamp(1.5rem, 4svh, 3rem) 1.25rem 1.5rem;
+  padding: max(clamp(1.5rem, 4svh, 3rem), env(safe-area-inset-top))
+    1.25rem max(1.5rem, env(safe-area-inset-bottom));
   flex-direction: column;
   align-items: center;
   justify-content: center;
@@ -703,7 +736,7 @@ body.is-solved .in-success-credit {
 }
 
 .site-footer {
-  padding: 4.25rem 0 1.75rem;
+  padding: 4.25rem 0 max(1.75rem, env(safe-area-inset-bottom));
   color: var(--muted);
   font-size: 0.7rem;
 }
@@ -757,8 +790,8 @@ body.is-solved .in-success-credit {
 
 #close-help {
   flex: 0 0 auto;
-  width: 2.75rem;
-  height: 2.75rem;
+  width: 3rem;
+  height: 3rem;
   border-radius: 50%;
   font-size: 1.3rem;
 }
@@ -772,82 +805,6 @@ body.is-solved .in-success-credit {
 
 .dialog-inner p + p {
   margin-top: 0.9rem;
-}
-
-@media (max-width: 480px) {
-  .site-header,
-  main,
-  .site-footer {
-    width: min(100% - 1.5rem, 680px);
-  }
-
-  .site-header {
-    padding-top: 0.85rem;
-  }
-
-  main {
-    padding-top: 2.7rem;
-  }
-
-  .puzzle-heading {
-    gap: 0.75rem;
-    margin-bottom: 1.05rem;
-  }
-
-  #attempt-count {
-    font-size: clamp(2.2rem, 13vw, 3.4rem);
-  }
-
-  .clue-row {
-    gap: 0.35rem 0.85rem;
-    margin-top: 1.1rem;
-    font-size: 0.7rem;
-  }
-
-  .guess-row {
-    gap: 0.4rem;
-  }
-
-  #guess-button {
-    min-width: 4.5rem;
-    padding-inline: 0.75rem;
-  }
-
-  .feedback-row {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 0.1rem;
-    min-height: 3.25rem;
-  }
-
-  .site-footer {
-    padding-top: 3.25rem;
-  }
-}
-
-@media (max-width: 320px) {
-  .site-header,
-  main,
-  .site-footer {
-    width: min(100% - 1.25rem, 680px);
-  }
-
-  .header-meta {
-    gap: 0.5rem;
-  }
-
-  #date-label {
-    font-size: 0.68rem;
-  }
-
-  .guess-row {
-    gap: 0.3rem;
-  }
-
-  #guess-button {
-    min-width: 4.25rem;
-    padding-inline: 0.6rem;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -865,5 +822,320 @@ body.is-solved .in-success-credit {
 
   .win-seal {
     animation: none !important;
+  }
+}
+
+/* Phone layout: keep the puzzle readable and the solved result shareable
+   without relying on a fixed viewport height. */
+@media (max-width: 480px) {
+  .site-header,
+  main,
+  .site-footer {
+    width: min(100%, 680px);
+    padding-inline: 0.75rem;
+  }
+
+  .site-header {
+    padding-top: max(0.85rem, env(safe-area-inset-top));
+  }
+
+  main {
+    padding-top: 1.75rem;
+  }
+
+  .site-footer {
+    padding-top: 2.5rem;
+  }
+
+  .guess-row {
+    gap: 0.4rem;
+  }
+
+  .puzzle-heading {
+    align-items: center;
+    gap: 0.7rem;
+    margin-bottom: 0.85rem;
+  }
+
+  #game-panel h1 {
+    font-size: 1.35rem;
+  }
+
+  #attempt-count {
+    font-size: clamp(2.8rem, 14vw, 4.2rem);
+  }
+
+  #scene {
+    height: clamp(180px, 54vw, 230px);
+    aspect-ratio: auto;
+  }
+
+  .timeline-labels {
+    padding-top: 0.45rem;
+  }
+
+  .clue-row {
+    gap: 0.45rem 1rem;
+    margin-top: 0.95rem;
+    padding-block: 0.72rem;
+    font-size: 0.72rem;
+    line-height: 1.35;
+  }
+
+  #guess-form {
+    margin-top: 0.95rem;
+  }
+
+  #guess-input,
+  #guess-button {
+    min-height: 3rem;
+  }
+
+  #guess-button {
+    min-width: 4.5rem;
+    padding-inline: 0.75rem;
+  }
+
+  .feedback-row {
+    min-height: 2.8rem;
+    padding-top: 0.6rem;
+  }
+
+  .secondary-controls {
+    display: flex;
+    max-width: 32rem;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.5rem;
+    margin-top: 0.1rem;
+  }
+
+  .secondary-controls button {
+    width: 100%;
+    min-height: 3rem;
+    padding: 0.6rem 0.75rem;
+    border: 1px solid var(--rule);
+    border-radius: 0.2rem;
+    background: var(--surface);
+    line-height: 1.25;
+    text-align: left;
+    text-decoration: none;
+    white-space: normal;
+  }
+
+  .secondary-controls #reveal-button {
+    align-self: flex-start;
+    width: auto;
+    min-width: 0;
+    padding-inline: 0;
+    border: 0;
+    background: transparent;
+    text-decoration: underline;
+    text-underline-offset: 0.2em;
+  }
+
+  #hint-button:disabled {
+    opacity: 1;
+    border-style: dashed;
+    background: transparent;
+  }
+
+  #hint-text {
+    margin-top: 0.7rem;
+    font-size: 0.84rem;
+    line-height: 1.45;
+  }
+
+  body.is-solved #result {
+    width: min(100%, 30rem);
+    min-height: 100svh;
+    padding: max(1.1rem, env(safe-area-inset-top))
+      0.75rem max(1.35rem, env(safe-area-inset-bottom));
+    justify-content: flex-start;
+  }
+
+  body.is-solved .win-seal {
+    width: 2.25rem;
+    height: 2.25rem;
+    margin-bottom: 0.35rem;
+  }
+
+  body.is-solved #success-heading {
+    margin-bottom: 0.6rem;
+    font-size: clamp(1.35rem, 5vw, 1.8rem);
+  }
+
+  body.is-solved #success-score {
+    gap: 0.35rem;
+  }
+
+  body.is-solved #success-count {
+    font-size: clamp(5.5rem, 25vw, 8.5rem);
+    line-height: 0.76;
+  }
+
+  body.is-solved #success-unit {
+    font-size: 0.95rem;
+  }
+
+  body.is-solved #success-hint {
+    margin-top: 0.6rem;
+    max-width: 100%;
+    padding: 0.35rem 0.65rem;
+    font-size: 0.72rem;
+  }
+
+  body.is-solved .success-date {
+    margin-top: 0.5rem;
+  }
+
+  body.is-solved #answer-title {
+    max-width: 100%;
+    margin-top: 0.7rem;
+    font-size: 1rem;
+  }
+
+  body.is-solved #win-barcode {
+    width: 100%;
+    margin-top: 0.6rem;
+    aspect-ratio: 16 / 3;
+  }
+
+  body.is-solved #share-prompt {
+    margin-top: 0.8rem;
+    font-size: 0.82rem;
+  }
+
+  body.is-solved #share-controls {
+    display: grid;
+    width: 100%;
+    max-width: 28rem;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.5rem;
+    margin-top: 0.55rem;
+  }
+
+  body.is-solved #share-controls a,
+  body.is-solved #share-controls button {
+    width: 100%;
+    min-width: 0;
+    min-height: 3rem;
+    padding: 0.55rem 0.4rem;
+    line-height: 1.2;
+    text-align: center;
+    white-space: normal;
+  }
+
+  body.is-solved #share-controls #copy-link {
+    grid-column: 1 / -1;
+    border-color: #757984;
+    background: transparent;
+  }
+
+  body.is-solved #share-status {
+    max-width: 28rem;
+    margin-top: 0.55rem;
+    line-height: 1.35;
+  }
+
+  body.is-solved #share-note {
+    margin-top: 0.45rem;
+    line-height: 1.35;
+  }
+
+  body.is-solved .download-card,
+  body.is-solved #share-link,
+  body.is-solved #play-today {
+    max-width: 100%;
+  }
+
+  body.is-solved #completion-message {
+    margin-top: 0.75rem;
+    line-height: 1.35;
+  }
+
+  body.is-solved .in-success-credit {
+    margin-top: 1.25rem;
+    padding-top: 0;
+    line-height: 1.45;
+  }
+
+  #help-dialog {
+    width: min(calc(100% - 1rem), 32rem);
+    max-height: calc(100svh - max(1rem, env(safe-area-inset-top)) - max(1rem, env(safe-area-inset-bottom)));
+  }
+
+  .dialog-inner {
+    max-height: inherit;
+    padding: 1rem;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .dialog-topline {
+    margin-bottom: 0.85rem;
+  }
+
+  .dialog-inner p {
+    font-size: 0.88rem;
+  }
+}
+
+@media (max-width: 320px) {
+  .site-header,
+  main,
+  .site-footer {
+    width: min(100%, 680px);
+    padding-inline: 0.625rem;
+  }
+
+  main {
+    padding-top: 1.35rem;
+  }
+
+  .header-meta {
+    gap: 0.45rem;
+  }
+
+  #date-label {
+    font-size: 0.68rem;
+  }
+
+  #scene {
+    height: 180px;
+  }
+
+  .guess-row {
+    gap: 0.3rem;
+  }
+
+  #guess-button {
+    min-width: 4.25rem;
+    padding-inline: 0.6rem;
+  }
+
+  body.is-solved #result {
+    padding-inline: 0.625rem;
+  }
+
+  body.is-solved #share-controls a,
+  body.is-solved #share-controls button {
+    padding-inline: 0.3rem;
+    font-size: 0.74rem;
+  }
+}
+
+@media (max-height: 500px) and (orientation: landscape) {
+  main {
+    padding-top: 1.5rem;
+  }
+
+  #scene {
+    height: clamp(120px, 45svh, 200px);
+    aspect-ratio: auto;
+  }
+
+  body.is-solved #success-count {
+    font-size: clamp(5.5rem, 24svh, 8rem);
   }
 }
