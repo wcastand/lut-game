@@ -1,5 +1,6 @@
-import { copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { readFileSync as readFileSyncLocal } from 'node:fs';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as vm from 'node:vm';
@@ -33,6 +34,21 @@ const ROOT_TITLE = 'Name the movie — lut game';
 const SHARE_TITLE = 'Can you name this movie? — lut game';
 const DESCRIPTION = 'A daily film guessing game: identify one movie from its chronological color barcode.';
 const IMAGE_ALT = 'Color barcode for a movie guessing puzzle. The title is not shown.';
+const RUNTIME_ASSETS = [
+  { source: 'style.css', attribute: 'href', extension: 'css' },
+  { source: 'site-config.js', attribute: 'src', extension: 'js' },
+  { source: 'daily.js', attribute: 'src', extension: 'js' },
+  { source: 'data.js', attribute: 'src', extension: 'js' },
+  { source: 'game.js', attribute: 'src', extension: 'js' },
+];
+const RETAINABLE_ASSET_EXTENSIONS = new Map([
+  ['style', 'css'],
+  ['game', 'js'],
+  ['daily', 'js'],
+  ['data', 'js'],
+  ['site-config', 'js'],
+]);
+const RETAINABLE_ASSET_PATTERN = /^([a-z-]+)\.([0-9a-f]{16})\.(css|js)$/;
 
 function loadBrowserSources() {
   const sandbox = { window: {} };
@@ -136,6 +152,76 @@ function replaceDescriptionTag(html) {
   const description = metaTag('name="description" content', DESCRIPTION);
   const pattern = /<meta\b(?=[^>]*\bname\s*=\s*["']description["'])[^>]*>/i;
   return pattern.test(html) ? html.replace(pattern, description) : html;
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function runtimeAssetManifest(bytesBySource) {
+  return new Map(RUNTIME_ASSETS.map(({ source, extension }) => {
+    const bytes = bytesBySource.get(source);
+    if (!bytes) throw new Error(`Missing runtime source ${source}.`);
+    const hash = createHash('sha256').update(bytes).digest('hex').slice(0, 16);
+    return [source, {
+      bytes,
+      path: `assets/${source.replace(/\.[^.]+$/, '')}.${hash}.${extension}`,
+      hash,
+    }];
+  }));
+}
+
+async function readRetainedRuntimeAssets() {
+  const retained = new Map();
+  let entries;
+  try {
+    entries = await readdir(path.join(distRoot, 'assets'), { withFileTypes: true });
+  } catch (error) {
+    if (error?.code === 'ENOENT') return retained;
+    throw error;
+  }
+
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    const match = entry.name.match(RETAINABLE_ASSET_PATTERN);
+    if (!match || RETAINABLE_ASSET_EXTENSIONS.get(match[1]) !== match[3]) continue;
+    let bytes;
+    try {
+      bytes = await readFile(path.join(distRoot, 'assets', entry.name));
+    } catch {
+      continue;
+    }
+    const hash = createHash('sha256').update(bytes).digest('hex').slice(0, 16);
+    if (hash === match[2]) retained.set(`assets/${entry.name}`, bytes);
+  }
+  return retained;
+}
+
+function rewriteRuntimeAssetReferences(html, manifest) {
+  let rewritten = html;
+  for (const { source, attribute } of RUNTIME_ASSETS) {
+    const asset = manifest.get(source);
+    if (!asset) throw new Error(`Missing hashed runtime asset for ${source}.`);
+    const pattern = new RegExp(
+      `(\\b${attribute}\\s*=\\s*["'])(?:\\./)?${escapeRegExp(source)}(["'])`,
+      'g',
+    );
+    rewritten = rewritten.replace(pattern, `$1${asset.path}$2`);
+  }
+  return rewritten;
+}
+
+function assertRuntimeAssetReferences(html, manifest) {
+  for (const { source } of RUNTIME_ASSETS) {
+    const asset = manifest.get(source);
+    if (!asset || !html.includes(asset.path)) {
+      throw new Error(`Generated HTML does not reference ${source} at its hashed path.`);
+    }
+    const plainReference = new RegExp(`(?:href|src)=["'](?:\\./)?${escapeRegExp(source)}["']`);
+    if (plainReference.test(html)) {
+      throw new Error(`Generated HTML retains an unversioned ${source} reference.`);
+    }
+  }
 }
 
 function buildHtml(source, { baseUrl, isRoot, shareId }) {
@@ -261,11 +347,18 @@ async function main() {
   assertSiteConfig(window.LUT_SITE);
   const movies = window.MOVIES;
   const shareIds = assertMovieData(movies, window.LUT_DAILY);
+  const runtimeBytes = new Map(await Promise.all(RUNTIME_ASSETS.map(async ({ source }) => [
+    source,
+    await readFile(path.join(publicRoot, source)),
+  ])));
+  const runtimeManifest = runtimeAssetManifest(runtimeBytes);
+  const retainedRuntimeAssets = await readRetainedRuntimeAssets();
   const sourceIndex = await readFile(path.join(publicRoot, 'index.html'), 'utf8');
   const rootMovie = window.LUT_DAILY.movieForDay(movies, window.LUT_DAILY.dayKey(new Date())) || movies[0];
   const rootShareId = window.LUT_DAILY.shareId(rootMovie);
 
   await rm(distRoot, { recursive: true, force: true });
+  await mkdir(path.join(distRoot, 'assets'), { recursive: true });
   await mkdir(path.join(distRoot, 'previews'), { recursive: true });
   await mkdir(path.join(distRoot, 'play'), { recursive: true });
 
@@ -274,12 +367,19 @@ async function main() {
     path.join(distRoot, filename),
   )));
   await writeFile(path.join(distRoot, '.nojekyll'), '');
+  const assetsToWrite = new Map(retainedRuntimeAssets);
+  for (const asset of runtimeManifest.values()) assetsToWrite.set(asset.path, asset.bytes);
+  await Promise.all([...assetsToWrite].map(([assetPath, bytes]) => writeFile(
+    path.join(distRoot, assetPath),
+    bytes,
+  )));
 
-  const rootHtml = buildHtml(sourceIndex, {
+  const rootHtml = rewriteRuntimeAssetReferences(buildHtml(sourceIndex, {
     baseUrl,
     isRoot: true,
     shareId: rootShareId,
-  });
+  }), runtimeManifest);
+  assertRuntimeAssetReferences(rootHtml, runtimeManifest);
   await writeFile(path.join(distRoot, 'index.html'), rootHtml);
 
   let previewCount = 0;
@@ -293,7 +393,11 @@ async function main() {
 
     const pageDirectory = path.join(distRoot, 'play', id);
     await mkdir(pageDirectory, { recursive: true });
-    const pageHtml = buildHtml(sourceIndex, { baseUrl, isRoot: false, shareId: id });
+    const pageHtml = rewriteRuntimeAssetReferences(
+      buildHtml(sourceIndex, { baseUrl, isRoot: false, shareId: id }),
+      runtimeManifest,
+    );
+    assertRuntimeAssetReferences(pageHtml, runtimeManifest);
     if (!pageHtml.includes('<base href="../../">')) throw new Error(`Missing base tag for ${id}.`);
     await writeFile(path.join(pageDirectory, 'index.html'), pageHtml);
     pageCount += 1;
@@ -306,7 +410,7 @@ async function main() {
   if (previewCount !== movies.length || pageCount !== movies.length) {
     throw new Error('Preview or landing-page count does not match movie count.');
   }
-  console.log(`Built dist/ (${previewCount} previews, ${pageCount} play pages).`);
+  console.log(`Built dist/ (${previewCount} previews, ${pageCount} play pages, ${runtimeManifest.size} hashed runtime assets).`);
 }
 
 await main();

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
 import { execFile, spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { cp, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -13,6 +14,14 @@ const testDirectory = path.dirname(fileURLToPath(import.meta.url));
 const serverSource = path.join(testDirectory, 'dev-server.mjs');
 const publishedDist = path.join(testDirectory, 'dist');
 const execFileAsync = promisify(execFile);
+
+const runtimeSources = [
+  ['style.css', 'href', 'css'],
+  ['site-config.js', 'src', 'js'],
+  ['daily.js', 'src', 'js'],
+  ['data.js', 'src', 'js'],
+  ['game.js', 'src', 'js'],
+];
 
 const fixture = {
   index: `<!doctype html>\n<html><head><title>Fixture game</title></head><body><main id="app">fixture index</main></body></html>\n`,
@@ -165,6 +174,16 @@ function createSseReader(streamReader) {
   };
 }
 
+async function nextReloadFor(events, filename, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (true) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new Error(`SSE reload event timed out for ${filename}`);
+    const event = await events.next(remaining);
+    if (event.event === 'reload' && event.data === filename) return event;
+  }
+}
+
 function assertReloadScriptInjected(body) {
   const expectedScript = '<script src="/__dev/reload.js"></script>';
   assert.equal(
@@ -201,7 +220,7 @@ before(
       `import {readFile, writeFile} from 'node:fs/promises';
 import path from 'node:path';
 const root = path.resolve(new URL('..', import.meta.url).pathname);
-const sources = await Promise.all(['index.html', 'data.js', 'daily.js', 'site-config.js']
+const sources = await Promise.all(['index.html', 'style.css', 'game.js', 'data.js', 'daily.js', 'site-config.js']
   .map((filename) => readFile(path.join(root, filename), 'utf8')));
 const marker = sources.map((source) => source.match(/data-rebuild-marker="([^"]+)"/)?.[1] ?? 'missing').join('|');
 const pagePath = path.join(root, 'dist', 'play', '${rebuildId}', 'index.html');
@@ -271,6 +290,107 @@ test('serves each allowlisted static asset with its content type and no-store ca
   }
 });
 
+test('publishes independently hashed runtime assets for root and shared pages', {timeout: 30_000}, async () => {
+  const sourceIndex = await readFile(path.join(testDirectory, 'index.html'), 'utf8');
+  assertSourceUsesPlainRuntimeReferences(sourceIndex);
+
+  const generatedRoot = await readFile(fixturePath('dist/index.html'), 'utf8');
+  const published = await loadPublishedModel();
+  const shareId = published.LUT_DAILY.shareId(published.MOVIES[0]);
+  const shared = await responseText(`${baseUrl}/play/${shareId}/`);
+  assert.equal(shared.response.status, 200);
+  assertNoStore(shared.response);
+  assert.match(shared.body, /<base href="\.\.\/\.\.\/">/);
+
+  const rootManifest = runtimeAssetManifestFromHtml(generatedRoot);
+  const sharedManifest = runtimeAssetManifestFromHtml(shared.body);
+  assert.deepEqual([...sharedManifest], [...rootManifest], 'root and shared pages should use the same runtime manifest');
+  assert.equal(await readFile(path.join(testDirectory, 'index.html'), 'utf8'), sourceIndex);
+
+  for (const [source] of runtimeSources) {
+    const assetPath = rootManifest.get(source);
+    const response = await fetch(`${baseUrl}/${assetPath}`);
+    assert.equal(response.status, 200, assetPath);
+    assertNoStore(response);
+    const bytes = Buffer.from(await response.arrayBuffer());
+    const expected = await readFile(path.join(testDirectory, source));
+    assert.deepEqual(bytes, expected, `${assetPath} should serve the source bytes`);
+    assert.equal(hashPrefix(bytes), assetPath.split('.')[1], `${assetPath} hash should match its bytes`);
+    assert.deepEqual(
+      await readFile(path.join(fixtureDirectory, 'dist', source)),
+      expected,
+      `unversioned dist/${source} should remain available as a compatibility alias`,
+    );
+  }
+
+  const styleHash = rootManifest.get('style.css').split('.')[1];
+  for (const invalidPath of [
+    '/assets/style.css',
+    `/assets/style.${'0'.repeat(15)}.css`,
+    `/assets/style.${'A'.repeat(16)}.css`,
+    `/assets/style.${styleHash}.js`,
+    '/assets/private.0000000000000000.js',
+    '/assets/%252e%252e/game.js',
+  ]) {
+    const response = await fetch(`${baseUrl}${invalidPath}`);
+    assert.equal(response.status, 404, invalidPath);
+    assertNoStore(response);
+  }
+
+  const builderDirectory = await mkdtemp(path.join(tmpdir(), 'lut-builder-'));
+  try {
+    await mkdir(path.join(builderDirectory, 'scripts'), {recursive: true});
+    await cp(path.join(testDirectory, 'scripts/build-pages.mjs'), path.join(builderDirectory, 'scripts/build-pages.mjs'));
+    for (const filename of ['index.html', 'LICENSE.txt', ...runtimeSources.map(([source]) => source)]) {
+      await cp(path.join(testDirectory, filename), path.join(builderDirectory, filename));
+    }
+    await execFileAsync(process.execPath, ['scripts/build-pages.mjs'], {cwd: builderDirectory});
+    const firstManifest = runtimeAssetManifestFromHtml(
+      await readFile(path.join(builderDirectory, 'dist/index.html'), 'utf8'),
+    );
+    const firstBytes = new Map();
+    for (const [source, assetPath] of firstManifest) {
+      firstBytes.set(source, await readFile(path.join(builderDirectory, 'dist', assetPath)));
+    }
+
+    for (const [filename, marker] of [['style.css', 'css mutation'], ['game.js', 'game mutation']]) {
+      const filenamePath = path.join(builderDirectory, filename);
+      const source = await readFile(filenamePath, 'utf8');
+      await writeFile(filenamePath, `${source}\n/* ${marker} */\n`);
+    }
+    await execFileAsync(process.execPath, ['scripts/build-pages.mjs'], {cwd: builderDirectory});
+    const secondManifest = runtimeAssetManifestFromHtml(
+      await readFile(path.join(builderDirectory, 'dist/index.html'), 'utf8'),
+    );
+
+    assert.notEqual(secondManifest.get('style.css'), firstManifest.get('style.css'));
+    assert.notEqual(secondManifest.get('game.js'), firstManifest.get('game.js'));
+    for (const source of ['style.css', 'game.js']) {
+      assert.deepEqual(
+        await readFile(path.join(builderDirectory, 'dist', firstManifest.get(source))),
+        firstBytes.get(source),
+        `${source} should remain readable at the old hash after a rebuild`,
+      );
+    }
+    for (const [source] of runtimeSources) {
+      const firstPath = firstManifest.get(source);
+      const secondPath = secondManifest.get(source);
+      if (source === 'style.css' || source === 'game.js') {
+        assert.equal(secondPath.split('.')[1], hashPrefix(await readFile(path.join(builderDirectory, source))));
+      } else {
+        assert.equal(secondPath, firstPath, `${source} URL should stay stable when its bytes are unchanged`);
+        assert.deepEqual(
+          await readFile(path.join(builderDirectory, 'dist', secondPath)),
+          firstBytes.get(source),
+          `${source} bytes should stay stable at their unchanged URL`,
+        );
+      }
+    }
+  } finally {
+    await rm(builderDirectory, {recursive: true, force: true});
+  }
+});
+
 async function loadPublishedModel() {
   const context = vm.createContext({window: {}});
   for (const filename of ['site-config.js', 'daily.js', 'data.js']) {
@@ -278,6 +398,33 @@ async function loadPublishedModel() {
     vm.runInContext(source, context, {filename});
   }
   return context.window;
+}
+
+function hashPrefix(bytes) {
+  return createHash('sha256').update(bytes).digest('hex').slice(0, 16);
+}
+
+function runtimeAssetManifestFromHtml(html) {
+  const references = [...html.matchAll(/\b(?:href|src)=["'](assets\/[^"']+)["']/g)].map((match) => match[1]);
+  assert.equal(references.length, runtimeSources.length, 'generated HTML should reference exactly five versioned runtime assets');
+  const manifest = new Map();
+  runtimeSources.forEach(([source, , extension], index) => {
+    const stem = source.replace(/\.[^.]+$/, '');
+    const pattern = new RegExp(`^assets/${stem}\\.[0-9a-f]{16}\\.${extension}$`);
+    assert.match(references[index], pattern, `runtime asset order for ${source}`);
+    manifest.set(source, references[index]);
+  });
+  return manifest;
+}
+
+function assertSourceUsesPlainRuntimeReferences(html) {
+  for (const [source, attribute] of runtimeSources) {
+    assert.match(
+      html,
+      new RegExp(`${attribute}=["'](?:\\./)?${source.replace('.', '\\.')}["']`),
+      `source HTML should retain its plain ${source} reference`,
+    );
+  }
 }
 
 function previewDimensions(bytes) {
@@ -431,13 +578,15 @@ test('rebuilds generated share HTML before broadcasting watched source reloads',
 
     for (const [filename, marker] of [
       ['index.html', 'index-20261016'],
+      ['style.css', 'style-20261016'],
+      ['game.js', 'game-20261016'],
       ['data.js', 'data-20261016'],
       ['daily.js', 'daily-20261016'],
       ['site-config.js', 'config-20261016'],
     ]) {
       const source = await readFile(fixturePath(filename), 'utf8');
       await writeFile(fixturePath(filename), `${source}\n<!-- data-rebuild-marker="${marker}" -->\n`);
-      assert.deepEqual(await events.next(10_000), {event: 'reload', data: filename});
+      assert.deepEqual(await nextReloadFor(events, filename), {event: 'reload', data: filename});
       const page = await responseText(`${baseUrl}/play/${shareId}/`);
       assert.equal(page.response.status, 200);
       assert.match(page.body, new RegExp(`dev-rebuild:[^<]*${marker}`));
@@ -1367,9 +1516,9 @@ test('unfinished saved games cannot restore locked hints or migrate the old stor
   const published = await loadPublishedModel();
   const targetMovie = published.LUT_DAILY.movieForDay(published.MOVIES, day);
   for (const item of [
-    {name:'old story flag before unlock',attempts:2,hinted:true,expectedHints:0},
+    {name:'old story flag before unlock',attempts:0,hinted:true,expectedHints:0},
     {name:'old story flag after unlock',attempts:12,hinted:true,expectedHints:0},
-    {name:'previously migrated early story',attempts:2,hintsUsed:3,expectedHints:0},
+    {name:'previously migrated early story',attempts:0,hintsUsed:3,expectedHints:0},
     {name:'early story with genre and year eligible',attempts:7,hintsUsed:3,expectedHints:2},
     {name:'legitimately revealed story',attempts:8,hintsUsed:3,expectedHints:3},
   ]) {
@@ -1438,7 +1587,7 @@ test(
       await writeFile(replacementPath, replacement);
       await rename(replacementPath, fixturePath('style.css'));
 
-      assert.deepEqual(await events.next(10_000), { event: 'reload', data: 'style.css' });
+      assert.deepEqual(await nextReloadFor(events, 'style.css'), { event: 'reload', data: 'style.css' });
       const changed = await responseText(`${baseUrl}/style.css`);
       assert.equal(changed.response.status, 200);
       assertNoStore(changed.response);

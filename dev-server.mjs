@@ -65,6 +65,7 @@ const server = createServer(async (request,response) => {
   let asset = assets.get(pathname);
   const play = pathname.match(/^\/play\/([a-f0-9]{16})(\/|\/index\.html)?$/);
   const preview = pathname.match(/^\/previews\/([a-f0-9]{16})\.png$/);
+  const versioned = /^\/assets\/(?:style\.[a-f0-9]{16}\.css|(?:game|daily|data|site-config)\.[a-f0-9]{16}\.js)$/.test(pathname);
   if (play) {
     if (!play[2]) {
       const url = new URL(request.url,'http://localhost');
@@ -73,6 +74,7 @@ const server = createServer(async (request,response) => {
     }
     asset = [`dist/play/${play[1]}/index.html`,'text/html; charset=utf-8'];
   } else if (preview) asset = [`dist/previews/${preview[1]}.png`,'image/png'];
+  else if (versioned) asset = [`dist${pathname}`,pathname.endsWith('.css') ? 'text/css; charset=utf-8' : 'text/javascript; charset=utf-8'];
   if (!asset) return send(404,'Not found.');
   const [file,type] = asset;
   try {
@@ -89,7 +91,7 @@ const server = createServer(async (request,response) => {
 
 let reloadTimer;
 let buildQueue = Promise.resolve();
-const rebuildSources = new Set(['index.html','data.js','daily.js','site-config.js']);
+const rebuildSources = new Set(['index.html','data.js','daily.js','site-config.js','game.js','style.css']);
 let rebuildNeeded = false;
 const execFileAsync = promisify(execFile);
 const watcher = watch(root,(_event,filename) => {
